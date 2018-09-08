@@ -1,0 +1,29 @@
+box: golang:1.8
+build:
+  base-path: /go/src/apitest
+
+  steps:
+    - setup-go-workspace
+
+    - script:
+        name: install govendor
+        code: go get -u github.com/kardianos/govendor
+
+    - script:
+        name: go vet
+        code: govendor vet +local
+
+    - script:
+      name: get dependencies
+      code: govendor sync -v
+
+    - script:
+        name: go test
+        code: |
+          govendor test +local
+
+    - script:
+        name: go build
+        code: |
+          go build ./..
+
