@@ -1,7 +1,7 @@
 box: golang:1.8
 build:
   base-path: /go/src/apitest
-
+  # Builder for approve-pipeline
   steps:
     - setup-go-workspace
 
