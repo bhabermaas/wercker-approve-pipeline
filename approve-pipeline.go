@@ -102,7 +102,7 @@ func (p *WerckerTestDemo) getPipelineToApprove() error {
 
 	// Looking through all the runs for our commitHash
 	for _, thisRun := range runs {
-		if thisRun.CommitHash != p.commitHash && thisRun.Pipeline.PipelineName != p.pipeline {
+		if thisRun.CommitHash != p.commitHash || thisRun.Pipeline.PipelineName != p.pipeline {
 			continue
 		}
 
