@@ -52,7 +52,7 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Printf("wercker-test applicationId: %s", demo.appID)
+	fmt.Printf("%s (%s) pipeline=%s commitHash=%s\n", demo.application, demo.appID, demo.pipeline, demo.commitHash)
 
 	// Get the specific run for the pipeline to be triggered
 	err = demo.getPipelineToApprove()
@@ -60,16 +60,13 @@ func main() {
 		fmt.Println(err)
 		return
 	}
-	fmt.Printf("Run=%s pipeline to approve: name=%s, ID=%s", demo.triggerObject.ID,
-		demo.triggerObject.Pipeline.PipelineName, demo.triggerObject.Pipeline.ID)
 
 	// Trigger and approve the manual pipeline
-	err = demo.triggerAndApprovePipeline()
-	if err != nil {
-		fmt.Println(err)
+	if demo.runID == "" {
+
+		fmt.Println("Successfully triggered and approved the pipeline.")
 		return
 	}
-	fmt.Println("Successfully triggered and approved the pipeline.")
 }
 
 // Fetch and save the application Id
@@ -101,9 +98,11 @@ func (p *WerckerTestDemo) getPipelineToApprove() error {
 		return err
 	}
 
+	hasManual := false
+
 	// Looking through all the runs for our commitHash
 	for _, thisRun := range runs {
-		if thisRun.CommitHash != p.commitHash {
+		if thisRun.CommitHash != p.commitHash && thisRun.Pipeline.PipelineName != p.pipeline {
 			continue
 		}
 
@@ -120,25 +119,46 @@ func (p *WerckerTestDemo) getPipelineToApprove() error {
 			return err
 		}
 
-		msg := fmt.Sprintf("runId=%s pipeline=%s id=%s status=%s", run.ID, run.Pipeline.PipelineName,
+		// Save sourceID in case a trigger is necessary.
+		p.sourceID = run.SourceRun.ID
+
+		msg := fmt.Sprintf("runId=%s pipeline=%s (%s) status=%s", run.ID, run.Pipeline.PipelineName,
 			run.Pipeline.ID, run.Status)
 		fmt.Println(msg)
 
 		if run.Pipeline.Name == p.pipeline && run.Pipeline.ManualApproval {
+			hasManual = true
 			p.pipelineID = run.Pipeline.ID
 			if run.Status != "pendingapproval" {
 				continue
 			}
-
 			p.triggerObject = &run
 			p.sourceID = run.SourceRun.ID
 			if run.SourceRun.Result != "passed" {
 				return errors.New("previous pipeline didn't pass so approval is not done.")
 			}
+			p.runID = run.ID
+			err = p.approveRun()
+			if err != nil {
+				return err
+			}
 			return nil
 		}
 	}
-	return errors.New("approval pipeline does not exist for this run")
+
+	// Fell out of loop. Either there is no manual pipeline or no
+	// approval pending.
+	if !hasManual {
+		return errors.New("approval pipeline does not exist for this run")
+	}
+	fmt.Println("There is no pending approval: so trigger the pipeline again")
+
+	// Trigger the pipeline and then approve it.
+	err = p.triggerAndApprovePipeline()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Trigger and approve the triggerObject (WerckerRun) for the pipeline
@@ -146,7 +166,7 @@ func (p *WerckerTestDemo) triggerAndApprovePipeline() error {
 	// Now get issue the trigger so we can get runId from response.
 	// Build the body of the request to do the triger.
 	url := fmt.Sprintf("https://app.wercker.com/api/v3/runs")
-	pid := fmt.Sprintf("\"pipelineId\":\"%s\"", p.triggerObject.Pipeline.ID)
+	pid := fmt.Sprintf("\"pipelineId\":\"%s\"", p.pipelineID)
 	msg := fmt.Sprintf("\"message\":\"%s\"", "auto-triggered-002")
 	brc := fmt.Sprintf("\"branch\":\"%s\"", p.branch)
 	cmt := fmt.Sprintf("\"commitHash\":\"%s\"", p.commitHash)
@@ -164,14 +184,21 @@ func (p *WerckerTestDemo) triggerAndApprovePipeline() error {
 	}
 	// Pickup the correct runId from the response that is needed for approve.
 	p.runID = trigger.Workflow.Items[0].Data.RunID
+	det := fmt.Sprintf("Triggered pipeline=%s (%s), runID=%s", p.pipeline, p.pipelineID, p.runID)
+	fmt.Println(det)
+	return p.approveRun()
+}
 
-	// approve this so it will run the pending pipeline
-	url = "https://app.wercker.com/api/v3/trigger/runs/approve"
+// Approve this so it will run the pending pipeline
+func (p *WerckerTestDemo) approveRun() error {
+	url := "https://app.wercker.com/api/v3/trigger/runs/approve"
 	app := fmt.Sprintf("{\"runId\":\"%s\"}", p.runID)
-	bdy, err = p.postWercker(url, app)
+	bdy, err := p.postWercker(url, app)
 	if err != nil {
 		return err
 	}
+	msg := fmt.Sprintf("Approved pipeline=%s (%s), runID=%s", p.pipeline, p.pipelineID, p.runID)
+	fmt.Println(msg)
 	showResponse(bdy, url)
 	return nil
 }
@@ -222,10 +249,11 @@ func showResponse(body []byte, url string) error {
 	data := make(map[string]interface{})
 	err := json.Unmarshal(body, &data)
 	if err == nil {
-		fmt.Println(fmt.Sprintf("URL is %s", url))
+		fmt.Println(fmt.Sprintf("Request: URL is %s", url))
 		str, err := json.MarshalIndent(data, "", "  ")
 		if err == nil {
-			fmt.Println(string(str))
+			msg := fmt.Sprintf("Response: %s", string(str))
+			fmt.Println(msg)
 		}
 	}
 	return err
